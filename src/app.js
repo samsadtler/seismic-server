@@ -3,7 +3,6 @@ var path = require('path');
 var bodyParser = require('body-parser');
 var express = require('express');
 var formData = require('form-data');
-var request = require('request');
 var http = require('http');
 require('es6-promise').polyfill();
 require('isomorphic-fetch');
