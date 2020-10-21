@@ -45,7 +45,7 @@ function checkForQuakes() {
         }
     }).catch(e => console.log('fetchNewQuakeData Error ', e));
 
-    quakeTimer = setTimeout(() => { checkForQuakes() }, 60000);
+    quakeTimer = setTimeout(() => { checkForQuakes() }, 20000);
 }
 
 function shouldTriggerSense(quakeData) {
