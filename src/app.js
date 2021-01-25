@@ -18,10 +18,10 @@ var quakeTimer;
 var lastRecordedQuakeTime = 0;
 var recentLocation = {};
 
-setInterval(function () {
-    log('Sending keep-alive GET request to heroku')
-    http.get("http://seismic-server.herokuapp.com");
-}, 1500000);
+// setInterval(function () {
+//     log('Sending keep-alive GET request to heroku')
+//     http.get("http://seismic-server.herokuapp.com");
+// }, 1500000);
 
 app.listen(port, function () {
     log('Server running on port ' + port);
@@ -35,13 +35,11 @@ app.get('/', function (req, res) {
 
 
 function checkForQuakes() {
+    console.log("getQuake Data")
     fetchNewQuakeData().then(function (quakeData) {
         if (quakeData && quakeData.time && shouldTriggerSense(quakeData)) {
-                if (quakeData == null) {
-                    log('Error discovered. Cancel triggering sense.')
-                } else {
-                    triggerSense(quakeData)
-                }
+            console.log(quakeData)
+            triggerSense(quakeData)
         }
     }).catch(e => console.log('fetchNewQuakeData Error ', e));
 
@@ -50,9 +48,8 @@ function checkForQuakes() {
 
 function shouldTriggerSense(quakeData) {
     var isNewQuake = quakeData.time > lastRecordedQuakeTime;
-    var isHighMagnitude = quakeData.mag > 1;
+    var isHighMagnitude = quakeData.mag > .1;
     var shouldTrigger = isNewQuake && isHighMagnitude;
-
     if (shouldTrigger) {
         log('Encountered USGS seismic event which should trigger sense');
         lastRecordedQuakeTime = quakeData.time;
@@ -67,31 +64,15 @@ function fetchNewQuakeData() {
     }).catch(e => { console.error(`${e}`) });
 }
 
-function loadDistance(quakeData) {
-    log('Loading distance from Google Maps API...' + JSON.stringify(quakeData));
-    quakeLocation = quakeData.place.split(' ').join('+');
-    var url = 'https://maps.googleapis.com/maps/api/distancematrix/json?origins=' + quakeLocation + '&destinations=New+York,New+York&key=' + process.env.GOOGLE_MAPS_API_KEY;
-    return fetchJson(url, function (json) {
-        if (responseHasErrors(json)) {
-            logError('error in load distance ',json.error_message);
-            return null;
-        }
-        quakeData.distance = json.rows[0].elements[0].distance.value;
-        log('Distance found: ' + quakeData.distance);
-        return quakeData;
-    }).catch(e => { console.log(`load distance error : ${e}`) });
-}
-
 function responseHasErrors(json) {
     return json.status != 'OK';
 }
 
 function triggerSense(quakeData) {
-    let magnitude = scaleMagnitude(quakeData.mag),
-        placeholder = 100
-        concatValues = magnitude + 'n' + placeholder;
+    let magnitude = scaleLogMagnitude(quakeData.mag),
+        duration = 10000
+        concatValues = magnitude + 'n' + duration;
     logShouldInflate(quakeData, magnitude);
-
     sendToParticle(concatValues);
 }
 
@@ -125,6 +106,15 @@ function scaleMagnitude(magnitude) {
     var newMin = 200;
     var scaledMagnitude = ((newMax - newMin) / (richterMax - richterMin)) * (magnitude - richterMax) + newMax;
     return Math.abs(Math.round(scaledMagnitude));
+}
+
+function scaleLogMagnitude(magnitude) {
+    var richterMax = 10;
+    var richterMin = 1;
+    var newMax = 10000;
+    var newMin = 0;
+    var scaledMagnitude = newMax*Math.log10(magnitude); 
+    return scaledMagnitude;
 }
 
  let fetchJson = async (url, handler) => {
