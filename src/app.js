@@ -13,10 +13,10 @@ app.use(bodyParser.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 app.set('view engine', 'html');
 
-var port = process.env.PORT || 4000;
-var quakeTimer;
-var lastRecordedQuakeTime = 0;
-var recentLocation = {};
+var port = process.env.PORT || 4000,
+    quakeTimer,
+    lastRecordedQuakeTimes = [],
+    lastQuakeSent;
 
 // setInterval(function () {
 //     log('Sending keep-alive GET request to heroku')
@@ -35,32 +35,47 @@ app.get('/', function (req, res) {
 
 
 function checkForQuakes() {
-    console.log("getQuake Data")
-    fetchNewQuakeData().then(function (quakeData) {
-        if (quakeData && quakeData.time && shouldTriggerSense(quakeData)) {
-            console.log(quakeData)
-            triggerSense(quakeData)
-        }
+    fetchNewQuakeData()
+        .then( quakeDataSet => processQuakeData(quakeDataSet))
+        .then( quakeData => {
+            quakeData.map(quake => {
+                if (quake && quake.time && shouldTriggerSense(quake)) {
+                    console.log(quake)
+                    triggerSense(quake)
+                }
+            })
     }).catch(e => console.log('fetchNewQuakeData Error ', e));
 
     quakeTimer = setTimeout(() => { checkForQuakes() }, 20000);
 }
 
 function shouldTriggerSense(quakeData) {
-    var isNewQuake = quakeData.time > lastRecordedQuakeTime;
+    var isNewQuake = quakeData.time > lastRecordedQuakeTimes;
     var isHighMagnitude = quakeData.mag > .1;
     var shouldTrigger = isNewQuake && isHighMagnitude;
     if (shouldTrigger) {
         log('Encountered USGS seismic event which should trigger sense');
-        lastRecordedQuakeTime = quakeData.time;
+        lastRecordedQuakeTimes = quakeData.time;
     }
     return shouldTrigger;
+}
+
+function processQuakeData(data) {
+    let quakeData = [];
+
+    for (i = 0; i < data.features.length; i++){
+        quakeData.push(data.features[i].properties);
+    }
+
+    quakeData.sort((a, b) => a.time - b.time)
+    console.log("USGS Output: ", quakeData)
+    return quakeData
 }
 
 function fetchNewQuakeData() {
     var url = 'http://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson';
     return fetchJson(url, json => {
-        if (json.features) return json.features[0].properties;
+        if (json.features) return json;
     }).catch(e => { console.error(`${e}`) });
 }
 
@@ -70,8 +85,20 @@ function responseHasErrors(json) {
 
 function triggerSense(quakeData) {
     let magnitude = scaleLogMagnitude(quakeData.mag),
-        duration = 10000
-        concatValues = magnitude + 'n' + duration;
+        duration;
+    
+    if (magnitude > lastQuakeSent) {
+        magnitude = magnitude - lastQuakeSent;
+        duration = magnitude
+        lastQuakeSent = magnitude;
+    } else {
+        duration = lastQuakeSent - magnitude;
+        lastQuakeSent = magnitude;
+        magnitude = 0
+    }
+
+
+    concatValues = magnitude + 'n' + duration;
     logShouldInflate(quakeData, magnitude);
     sendToParticle(concatValues);
 }
