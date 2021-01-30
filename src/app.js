@@ -15,7 +15,7 @@ app.set('view engine', 'html');
 
 var port = process.env.PORT || 4000,
     quakeTimer,
-    lastRecordedQuakeTimes = [],
+    lastRecordedQuakeTimes = 0,
     lastQuakeSent;
 
 // setInterval(function () {
@@ -38,11 +38,11 @@ function checkForQuakes() {
     fetchNewQuakeData()
         .then( quakeDataSet => processQuakeData(quakeDataSet))
         .then( quakeData => {
-            quakeData.map(quake => {
-                if (quake && quake.time && shouldTriggerSense(quake)) {
+                quakeData.map(quake => {
                     console.log(quake)
                     triggerSense(quake)
-                }
+                    console.log(quake.time)
+                    lastRecordedQuakeTimes = quake.time;
             })
     }).catch(e => console.log('fetchNewQuakeData Error ', e));
 
@@ -50,13 +50,11 @@ function checkForQuakes() {
 }
 
 function shouldTriggerSense(quakeData) {
-    var isNewQuake = quakeData.time > lastRecordedQuakeTimes;
-    var isHighMagnitude = quakeData.mag > .1;
-    var shouldTrigger = isNewQuake && isHighMagnitude;
-    if (shouldTrigger) {
-        log('Encountered USGS seismic event which should trigger sense');
-        lastRecordedQuakeTimes = quakeData.time;
-    }
+    // console.log(quakeData.time > lastRecordedQuakeTimes , quakeData.mag > .99 )
+    var isNewQuake = quakeData.time > lastRecordedQuakeTimes,
+        isHighMagnitude = quakeData.mag > .99,
+        shouldTrigger = isNewQuake && isHighMagnitude;
+   
     return shouldTrigger;
 }
 
@@ -64,7 +62,7 @@ function processQuakeData(data) {
     let quakeData = [];
 
     for (i = 0; i < data.features.length; i++){
-        quakeData.push(data.features[i].properties);
+        if(shouldTriggerSense(data.features[i].properties)) quakeData.push(data.features[i].properties);
     }
 
     quakeData.sort((a, b) => a.time - b.time)
@@ -85,18 +83,8 @@ function responseHasErrors(json) {
 
 function triggerSense(quakeData) {
     let magnitude = scaleLogMagnitude(quakeData.mag),
-        duration;
-    
-    if (magnitude > lastQuakeSent) {
-        magnitude = magnitude - lastQuakeSent;
-        duration = magnitude
+        duration = magnitude,
         lastQuakeSent = magnitude;
-    } else {
-        duration = lastQuakeSent - magnitude;
-        lastQuakeSent = magnitude;
-        magnitude = 0
-    }
-
 
     concatValues = magnitude + 'n' + duration;
     logShouldInflate(quakeData, magnitude);
@@ -121,7 +109,10 @@ function sendToParticle(concatValues) {
 
     fetch('https://api.particle.io/v1/devices/' + process.env.DEVICE_KEY + '/data?access_token=' + process.env.PARTICLE_TOKEN, requestOptions)
         .then(res => res.text())
-        .then(result => console.log(`Response received from seismic sense: ${result}`))
+        .then(result => {
+            log(`Response received from seismic sense: ${result}`);
+            return result
+        })
         .catch(error => logError('error' + error))
         .catch(error => logError('error' + error));
 }
