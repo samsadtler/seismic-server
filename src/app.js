@@ -129,7 +129,7 @@ function scaleMagnitude(magnitude) {
 function scaleLogMagnitude(magnitude) {
     var richterMax = 10;
     var richterMin = 1;
-    var newMax = 10000;
+    var newMax = 45000;
     var newMin = 0;
     var scaledMagnitude = newMax*Math.log10(magnitude); 
     return scaledMagnitude;
