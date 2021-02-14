@@ -33,24 +33,7 @@ app.get('/', function (req, res) {
     res.sendFile(path.join(__dirname + '/index.html'));
 });
 
-
-function checkForQuakes() {
-    fetchNewQuakeData()
-        .then( quakeDataSet => processQuakeData(quakeDataSet))
-        .then( quakeData => {
-                quakeData.map(quake => {
-                    console.log(quake)
-                    triggerSense(quake)
-                    console.log(quake.time)
-                    lastRecordedQuakeTimes = quake.time;
-            })
-    }).catch(e => console.log('fetchNewQuakeData Error ', e));
-
-    quakeTimer = setTimeout(() => { checkForQuakes() }, 20000);
-}
-
 function shouldTriggerSense(quakeData) {
-    // console.log(quakeData.time > lastRecordedQuakeTimes , quakeData.mag > .99 )
     var isNewQuake = quakeData.time > lastRecordedQuakeTimes,
         isHighMagnitude = quakeData.mag > .99,
         shouldTrigger = isNewQuake && isHighMagnitude;
@@ -81,19 +64,37 @@ function responseHasErrors(json) {
     return json.status != 'OK';
 }
 
-function triggerSense(quakeData) {
-    let magnitude = scaleLogMagnitude(quakeData.mag),
-        duration = magnitude,
-        lastQuakeSent = magnitude;
+function checkForQuakes() {
+    fetchNewQuakeData()
+        .then( quakeDataSet => processQuakeData(quakeDataSet))
+        .then( quakeData => {
+            Promise.all(
+                quakeData.map(
+                    async (quake) => {
+                        console.log(quake)
+                        await sendToParticle(quake)
+                        .then(
+                            console.log(quake.time),
+                            lastRecordedQuakeTimes = quake.time
+                        )
+            }))
+    }).catch(e => console.log('fetchNewQuakeData Error ', e));
 
-    concatValues = magnitude + 'n' + duration;
-    logShouldInflate(quakeData, magnitude);
-    sendToParticle(concatValues);
+    quakeTimer = setTimeout(() => { checkForQuakes() }, 20000);
 }
 
-function sendToParticle(concatValues) {
-    var form = new formData();
-    var header = new Headers();
+function triggerSense(quakeData) {
+    let magnitude = scaleLogMagnitude(quakeData.mag), duration = magnitude;
+    concatValues = magnitude + 'n' + duration;
+
+    logShouldInflate(quakeData, magnitude);
+
+    return concatValues;
+}
+
+async function sendToParticle(quakeData) {
+    let form = new formData(), header = new Headers();
+    let concatValues = triggerSense(quakeData);
 
     form.append('args', concatValues);
     header.append("Content-Type", "application/x-www-form-urlencoded");
@@ -107,7 +108,7 @@ function sendToParticle(concatValues) {
 
     log('send to particle');
 
-    fetch('https://api.particle.io/v1/devices/' + process.env.DEVICE_KEY + '/data?access_token=' + process.env.PARTICLE_TOKEN, requestOptions)
+    return await fetch('https://api.particle.io/v1/devices/' + process.env.DEVICE_KEY + '/data?access_token=' + process.env.PARTICLE_TOKEN, requestOptions)
         .then(res => res.text())
         .then(result => {
             log(`Response received from seismic sense: ${result}`);
@@ -131,7 +132,7 @@ function scaleLogMagnitude(magnitude) {
     var richterMin = 1;
     var newMax = 45000;
     var newMin = 0;
-    var scaledMagnitude = newMax*Math.log10(magnitude); 
+    var scaledMagnitude = Math.round(newMax*Math.log10(magnitude)); 
     return scaledMagnitude;
 }
 
