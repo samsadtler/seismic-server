@@ -18,10 +18,10 @@ var port = process.env.PORT || 4000,
     lastRecordedQuakeTimes = 0,
     lastQuakeSent;
 
-// setInterval(function () {
-//     log('Sending keep-alive GET request to heroku')
-//     http.get("http://seismic-server.herokuapp.com");
-// }, 1500000);
+setInterval(function () {
+    log('Sending keep-alive GET request to heroku')
+    http.get("http://seismic-server.herokuapp.com");
+}, 1500000);
 
 app.listen(port, function () {
     log('Server running on port ' + port);
