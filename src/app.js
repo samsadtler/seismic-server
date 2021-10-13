@@ -60,7 +60,6 @@ function processQuakeData(data) {
 function fetchNewQuakeData() {
     var url = 'http://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson';
     return fetchJson(url, json => {
-        console.log('new quakre data', json)
         if (json.features) return json;
     }).catch(e => { console.error(`${e}`) });
 }
