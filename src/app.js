@@ -14,13 +14,13 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.set('view engine', 'html');
 
 var port = process.env.PORT || 4000,
-    quakeTimer,
-    lastRecordedQuakeTimes = 0,
-    lastQuakeSent;
+    lastRecordedQuakeTimes = 0;
+
+let currentQuakeState = {'body':'1000n200'};
 
 setInterval(function () {
-    log('Sending keep-alive GET request to heroku')
-    http.get("http://seismic-server.herokuapp.com");
+    log(`Sending keep-alive GET request to heroku: http://seismic-server${process.env.ENVIRONMENT||''}.herokuapp.com`)
+    http.get(`http://seismic-server${process.env.ENVIRONMENT||''}.herokuapp.com`);
 }, 1500000);
 
 app.listen(port, function () {
@@ -33,9 +33,14 @@ app.get('/', function (req, res) {
     res.sendFile(path.join(__dirname + '/index.html'));
 });
 
+app.post('/v1/latest', function (req, res) {
+    console.log('request ', req)
+    return res.json(currentQuakeState)
+});
+
 function shouldTriggerSense(quakeData) {
     var isNewQuake = quakeData.time > lastRecordedQuakeTimes,
-        isHighMagnitude = quakeData.mag > .99,
+        isHighMagnitude = quakeData.mag > .01,
         shouldTrigger = isNewQuake && isHighMagnitude;
    
     return shouldTrigger;
@@ -43,9 +48,8 @@ function shouldTriggerSense(quakeData) {
 
 function processQuakeData(data) {
     let quakeData = [];
-
     for (i = 0; i < data.features.length; i++){
-        if(shouldTriggerSense(data.features[i].properties)) quakeData.push(data.features[i].properties);
+        if (shouldTriggerSense(data.features[i].properties)) quakeData.push(data.features[i].properties);
     }
 
     quakeData.sort((a, b) => a.time - b.time)
@@ -56,25 +60,21 @@ function processQuakeData(data) {
 function fetchNewQuakeData() {
     var url = 'http://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson';
     return fetchJson(url, json => {
+        console.log('new quakre data', json)
         if (json.features) return json;
     }).catch(e => { console.error(`${e}`) });
 }
 
-function responseHasErrors(json) {
-    return json.status != 'OK';
-}
 
 function checkForQuakes() {
     fetchNewQuakeData()
         .then( quakeDataSet => processQuakeData(quakeDataSet))
-        .then( quakeData => {
+        .then(quakeData => {
             Promise.all(
                 quakeData.map(
                     async (quake) => {
-                        console.log(quake)
                         await sendToParticle(quake)
                         .then(
-                            console.log(quake.time),
                             lastRecordedQuakeTimes = quake.time
                         )
             }))
@@ -87,7 +87,7 @@ function triggerSense(quakeData) {
     let magnitude = scaleLogMagnitude(quakeData.mag), duration = magnitude;
     concatValues = magnitude + 'n' + duration;
 
-    logShouldInflate(quakeData, magnitude);
+    logShouldInflate(quakeData, magnitude); // logs
 
     return concatValues;
 }
@@ -118,21 +118,23 @@ async function sendToParticle(quakeData) {
         .catch(error => logError('error' + error));
 }
 
-function scaleMagnitude(magnitude) {
-    var richterMax = 10;
-    var richterMin = 1;
-    var newMax = 4000;
-    var newMin = 200;
-    var scaledMagnitude = ((newMax - newMin) / (richterMax - richterMin)) * (magnitude - richterMax) + newMax;
-    return Math.abs(Math.round(scaledMagnitude));
-}
+//linear scale function
+// function scaleMagnitude(magnitude) {
+//     var richterMax = 10;
+//     var richterMin = 0;
+//     var newMax = 4000;
+//     var newMin = 200;
+//     var scaledMagnitude = ((newMax - newMin) / (richterMax - richterMin)) * (magnitude - richterMax) + newMax;
+//     return Math.abs(Math.round(scaledMagnitude));
+// }
 
+// log 10 based scale function
 function scaleLogMagnitude(magnitude) {
     var richterMax = 10;
     var richterMin = 1;
-    var newMax = 45000;
+    var newMax = process.env.M|| 120000;
     var newMin = 0;
-    var scaledMagnitude = Math.round(newMax*Math.log10(magnitude)); 
+    var scaledMagnitude = Math.abs(Math.round(newMax*Math.log10(magnitude))); 
     return scaledMagnitude;
 }
 
@@ -160,5 +162,4 @@ function logShouldInflate(quakeData, scaledMagnitude) {
     console.log("Vibration triggered with values:");
     console.log(" -> magnitude:        " + quakeData.mag);
     console.log(" -> scaled magnitude: " + scaledMagnitude);
-
 }
