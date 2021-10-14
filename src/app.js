@@ -131,8 +131,8 @@ async function sendToParticle(quakeData) {
 // log 10 based scale function
 function scaleLogMagnitude(magnitude) {
     let adjMagnitude = magnitude < 1 ? 1 : magnitude; // prevents dealing with negative numbers
-    let newMax = process.env.MAX_DURATION|| 120000;
-    let newMin = process.env.MIN_DURATION|| 60000;
+    let newMax = parseInt(process.env.MAX_DURATION)|| 120000;
+    let newMin = parseInt(process.env.MIN_DURATION)|| 60000;
     let scaledMagnitude = Math.abs(Math.round(newMax * Math.log10(adjMagnitude))) + newMin;
 
     return scaledMagnitude;
