@@ -59,6 +59,7 @@ function processQuakeData(data) {
 
 function fetchNewQuakeData() {
     var url = 'http://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson';
+    
     return fetchJson(url, json => {
         if (json.features) return json;
     }).catch(e => { console.error(`${e}`) });
@@ -129,11 +130,11 @@ async function sendToParticle(quakeData) {
 
 // log 10 based scale function
 function scaleLogMagnitude(magnitude) {
-    var richterMax = 10;
-    var richterMin = 1;
-    var newMax = process.env.M|| 120000;
-    var newMin = 0;
-    var scaledMagnitude = Math.abs(Math.round(newMax*Math.log10(magnitude))); 
+    let adjMagnitude = magnitude < 1 ? 1 : magnitude; // prevents dealing with negative numbers
+    let newMax = process.env.MAX_DURATION|| 120000;
+    let newMin = process.env.MIN_DURATION|| 60000;
+    let scaledMagnitude = Math.abs(Math.round(newMax * Math.log10(adjMagnitude))) + newMin;
+
     return scaledMagnitude;
 }
 
