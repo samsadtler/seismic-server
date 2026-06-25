@@ -15,10 +15,6 @@ var port = process.env.PORT || 4000,
 
 let currentQuakeState = {'body':'1000n200'};
 
-// setInterval(function () {
-//     log(`Sending keep-alive GET request to heroku: http://seismic-server${process.env.ENVIRONMENT||''}.herokuapp.com`)
-//     http.get(`http://seismic-server${process.env.ENVIRONMENT||''}.herokuapp.com`);
-// }, 1500000);
 
 app.listen(port, function () {
     log('Server running on port ' + port);
@@ -44,7 +40,7 @@ function shouldTriggerSense(quakeData) {
 
 function processQuakeData(data) {
     let quakeData = [];
-    for (i = 0; i < data.features.length; i++){
+    for (let i = 0; i < data.features.length; i++){
         if (shouldTriggerSense(data.features[i].properties)) quakeData.push(data.features[i].properties);
     }
 
@@ -102,7 +98,6 @@ async function sendToParticle(quakeData) {
 
     log('send to particle');
     const URL = 'https://api.particle.io/v1/devices/' + process.env.DEVICE_KEY + '/data?access_token=' + process.env.PARTICLE_TOKEN;
-    console.log(URL, requestOptions)
     return await fetch(URL, requestOptions)
         .then(res => res.text())
         .then(result => {
