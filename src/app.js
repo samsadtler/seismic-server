@@ -15,6 +15,8 @@ var port = process.env.PORT || 4000,
 
 let currentQuakeState = {'body':'1000n200'};
 
+// rolling buffer of recent quakes for the landing page
+let recentQuakes = [];
 
 app.listen(port, function () {
     log('Server running on port ' + port);
@@ -29,12 +31,41 @@ app.post('/v1/latest', function (req, res) {
     return res.json(currentQuakeState)
 });
 
+app.get('/v1/quakes', function (req, res) {
+    return res.json(recentQuakes);
+});
+
 function shouldTriggerSense(quakeData) {
     var isNewQuake = quakeData.time > lastRecordedQuakeTimes,
         isHighMagnitude = quakeData.mag > .01,
         shouldTrigger = isNewQuake && isHighMagnitude;
    
     return shouldTrigger;
+}
+
+// builds the display buffer from the full feed, independent of the
+// Particle trigger filter so the hardware path stays untouched
+function updateRecentQuakes(json) {
+    if (!json || !json.features) return;
+
+    recentQuakes = json.features
+        .map(feature => {
+            let p = feature.properties || {};
+            let coords = (feature.geometry && feature.geometry.coordinates) || [];
+            return {
+                id: feature.id,
+                place: p.place,
+                mag: p.mag,
+                time: p.time,
+                url: p.url,
+                type: p.type,
+                lon: coords[0],
+                lat: coords[1],
+                depth: coords[2]
+            };
+        })
+        .sort((a, b) => b.time - a.time)
+        .slice(0, 50);
 }
 
 function processQuakeData(data) {
@@ -59,6 +90,7 @@ function fetchNewQuakeData() {
 
 function checkForQuakes() {
     fetchNewQuakeData()
+        .then( quakeDataSet => { updateRecentQuakes(quakeDataSet); return quakeDataSet; })
         .then( quakeDataSet => processQuakeData(quakeDataSet))
         .then(quakeData => {
             Promise.all(
