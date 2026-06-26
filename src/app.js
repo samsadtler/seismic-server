@@ -28,7 +28,6 @@ app.get('/', function (req, res) {
 });
 
 app.post('/v1/latest', function (req, res) {
-    console.log('request ', req)
     return res.json(currentQuakeState)
 });
 
@@ -71,7 +70,7 @@ function updateRecentQuakes(json) {
 
 function processQuakeData(data) {
     let quakeData = [];
-    for (i = 0; i < data.features.length; i++){
+    for (let i = 0; i < data.features.length; i++){
         if (shouldTriggerSense(data.features[i].properties)) quakeData.push(data.features[i].properties);
     }
 
@@ -104,12 +103,12 @@ function checkForQuakes() {
             }))
     }).catch(e => console.log('fetchNewQuakeData Error ', e));
 
-    quakeTimer = setTimeout(() => { checkForQuakes() }, 20000);
+    setTimeout(() => { checkForQuakes() }, 20000);
 }
 
 function triggerSense(quakeData) {
-    let magnitude = scaleLogMagnitude(quakeData.mag), duration = magnitude;
-    concatValues = magnitude + 'n' + duration;
+    const magnitude = scaleLogMagnitude(quakeData.mag), duration = magnitude;
+    const concatValues = magnitude + 'n' + duration;
 
     logShouldInflate(quakeData, magnitude); // logs
 
@@ -130,7 +129,6 @@ async function sendToParticle(quakeData) {
 
     log('send to particle');
     const URL = 'https://api.particle.io/v1/devices/' + process.env.DEVICE_KEY + '/data?access_token=' + process.env.PARTICLE_TOKEN;
-    console.log(URL, requestOptions)
     return await fetch(URL, requestOptions)
         .then(res => res.text())
         .then(result => {
