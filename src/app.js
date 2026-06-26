@@ -26,7 +26,6 @@ app.get('/', function (req, res) {
 });
 
 app.post('/v1/latest', function (req, res) {
-    console.log('request ', req)
     return res.json(currentQuakeState)
 });
 
@@ -72,12 +71,12 @@ function checkForQuakes() {
             }))
     }).catch(e => console.log('fetchNewQuakeData Error ', e));
 
-    quakeTimer = setTimeout(() => { checkForQuakes() }, 20000);
+    setTimeout(() => { checkForQuakes() }, 20000);
 }
 
 function triggerSense(quakeData) {
-    let magnitude = scaleLogMagnitude(quakeData.mag), duration = magnitude;
-    concatValues = magnitude + 'n' + duration;
+    const magnitude = scaleLogMagnitude(quakeData.mag), duration = magnitude;
+    const concatValues = magnitude + 'n' + duration;
 
     logShouldInflate(quakeData, magnitude); // logs
 
