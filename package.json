@@ -3,14 +3,14 @@
     "version": "0.0.3",
     "private": true,
     "engines": {
-        "node": "25.4.0",
-        "npm": "11.7.0"
+        "node": ">= 22.9",
+        "npm": ">= 10"
     },
     "dependencies": {
         "body-parser": "~1.19.0",
         "express": "^5.2.1"
     },
     "scripts": {
-        "start": "node --env-file=.env src/app.js"
+        "start": "node --env-file-if-exists=.env src/app.js"
     }
 }

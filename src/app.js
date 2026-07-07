@@ -75,7 +75,7 @@ function processQuakeData(data) {
     }
 
     quakeData.sort((a, b) => a.time - b.time)
-    console.log("USGS Output: ", quakeData)
+    console.log("USGS Output: ", quakeData, new Date().toLocaleTimeString())
     return quakeData
 }
 
