@@ -1,13 +1,172 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-	<title>Seismic Server</title>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Seismic Server — Live Quakes</title>
+	<style>
+		:root {
+			--bg: #0b0e14;
+			--panel: #141a24;
+			--border: #222b38;
+			--text: #e6edf3;
+			--muted: #8b97a7;
+			--accent: #4cc2ff;
+		}
+		* { box-sizing: border-box; }
+		body {
+			margin: 0;
+			font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+			background: var(--bg);
+			color: var(--text);
+		}
+		header {
+			padding: 24px 20px 16px;
+			border-bottom: 1px solid var(--border);
+		}
+		h1 { margin: 0; font-size: 20px; font-weight: 600; }
+		.sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+		.status { color: var(--muted); font-size: 12px; margin-top: 8px; }
+		.status .dot {
+			display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+			background: #3fb950; margin-right: 6px; vertical-align: middle;
+		}
+		.status.error .dot { background: #f85149; }
+		main { max-width: 760px; margin: 0 auto; padding: 16px 20px 48px; }
+		ul#quakes { list-style: none; margin: 0; padding: 0; }
+		li.quake {
+			display: flex; align-items: center; gap: 14px;
+			padding: 12px 14px; margin-bottom: 8px;
+			background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+		}
+		li.quake.new { animation: flash 1.6s ease-out; }
+		@keyframes flash {
+			from { background: #1d3a4d; border-color: var(--accent); }
+			to   { background: var(--panel); border-color: var(--border); }
+		}
+		.mag {
+			flex: 0 0 auto; width: 52px; height: 52px; border-radius: 8px;
+			display: flex; align-items: center; justify-content: center;
+			font-size: 18px; font-weight: 700; color: #0b0e14; background: #6e7681;
+		}
+		.body { flex: 1 1 auto; min-width: 0; }
+		.place {
+			font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+		}
+		.place a { color: var(--text); text-decoration: none; }
+		.place a:hover { color: var(--accent); text-decoration: underline; }
+		.meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+		.empty { color: var(--muted); text-align: center; padding: 48px 0; }
+	</style>
 </head>
 <body>
-<div>
-	<p>
-		Seismic Senses Are All The Rage
-	</p>
-</div>
+	<header>
+		<h1>Live Earthquakes</h1>
+		<div class="sub">Latest quakes from the USGS feed, updating as they come in.</div>
+		<div class="status" id="status"><span class="dot"></span><span id="status-text">Connecting…</span></div>
+	</header>
+	<main>
+		<ul id="quakes"></ul>
+		<div class="empty" id="empty" hidden>No recent quakes yet — first data lands within ~20s.</div>
+	</main>
+
+	<script>
+		var POLL_MS = 15000;
+		var seen = new Set();
+		var firstLoad = true;
+
+		// USGS-style color ramp by magnitude
+		function magColor(mag) {
+			if (mag == null) return '#6e7681';
+			if (mag >= 6) return '#f85149';
+			if (mag >= 4.5) return '#f0883e';
+			if (mag >= 2.5) return '#d29922';
+			return '#3fb950';
+		}
+
+		function relTime(ms) {
+			var diff = Date.now() - ms;
+			if (diff < 0) diff = 0;
+			var s = Math.floor(diff / 1000);
+			if (s < 60) return s + 's ago';
+			var m = Math.floor(s / 60);
+			if (m < 60) return m + 'm ago';
+			var h = Math.floor(m / 60);
+			if (h < 24) return h + 'h ago';
+			return Math.floor(h / 24) + 'd ago';
+		}
+
+		function setStatus(text, isError) {
+			var el = document.getElementById('status');
+			el.className = 'status' + (isError ? ' error' : '');
+			document.getElementById('status-text').textContent = text;
+		}
+
+		function render(quakes) {
+			var list = document.getElementById('quakes');
+			var empty = document.getElementById('empty');
+			empty.hidden = quakes.length > 0;
+			list.innerHTML = '';
+
+			quakes.forEach(function (q) {
+				var isNew = !firstLoad && !seen.has(q.id);
+				seen.add(q.id);
+
+				var li = document.createElement('li');
+				li.className = 'quake' + (isNew ? ' new' : '');
+
+				var mag = document.createElement('div');
+				mag.className = 'mag';
+				mag.style.background = magColor(q.mag);
+				mag.textContent = (q.mag == null ? '—' : q.mag.toFixed(1));
+
+				var body = document.createElement('div');
+				body.className = 'body';
+
+				var place = document.createElement('div');
+				place.className = 'place';
+				if (q.url && /^https?:\/\//.test(q.url)) {
+					var a = document.createElement('a');
+					a.href = q.url; a.target = '_blank'; a.rel = 'noopener';
+					a.textContent = q.place || 'Unknown location';
+					place.appendChild(a);
+				} else {
+					place.textContent = q.place || 'Unknown location';
+				}
+
+				var meta = document.createElement('div');
+				meta.className = 'meta';
+				meta.textContent = relTime(q.time) + (q.type ? ' · ' + q.type : '');
+
+				body.appendChild(place);
+				body.appendChild(meta);
+				li.appendChild(mag);
+				li.appendChild(body);
+				list.appendChild(li);
+			});
+
+			firstLoad = false;
+		}
+
+		function refresh() {
+			fetch('/v1/quakes')
+				.then(function (r) {
+					if (!r.ok) throw new Error('HTTP ' + r.status);
+					return r.json();
+				})
+				.then(function (quakes) {
+					render(Array.isArray(quakes) ? quakes : []);
+					var now = new Date().toLocaleTimeString();
+					setStatus('Updated ' + now, false);
+				})
+				.catch(function (e) {
+					setStatus('Connection error — retrying…', true);
+					console.error(e);
+				});
+		}
+
+		refresh();
+		setInterval(refresh, POLL_MS);
+	</script>
 </body>
 </html>

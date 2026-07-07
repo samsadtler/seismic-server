@@ -1,11 +1,8 @@
-var dotenv = require('dotenv');
+
 var path = require('path');
 var bodyParser = require('body-parser');
 var express = require('express');
-var formData = require('form-data');
-var http = require('http');
-require('es6-promise').polyfill();
-require('isomorphic-fetch');
+
 
 var app = express();
 app.use(bodyParser.json());
@@ -18,14 +15,11 @@ var port = process.env.PORT || 4000,
 
 let currentQuakeState = {'body':'1000n200'};
 
-setInterval(function () {
-    log(`Sending keep-alive GET request to heroku: http://seismic-server${process.env.ENVIRONMENT||''}.herokuapp.com`)
-    http.get(`http://seismic-server${process.env.ENVIRONMENT||''}.herokuapp.com`);
-}, 1500000);
+// rolling buffer of recent quakes for the landing page
+let recentQuakes = [];
 
 app.listen(port, function () {
     log('Server running on port ' + port);
-    dotenv.load();
     checkForQuakes();
 });
 
@@ -34,8 +28,11 @@ app.get('/', function (req, res) {
 });
 
 app.post('/v1/latest', function (req, res) {
-    console.log('request ', req)
     return res.json(currentQuakeState)
+});
+
+app.get('/v1/quakes', function (req, res) {
+    return res.json(recentQuakes);
 });
 
 function shouldTriggerSense(quakeData) {
@@ -46,14 +43,39 @@ function shouldTriggerSense(quakeData) {
     return shouldTrigger;
 }
 
+// builds the display buffer from the full feed, independent of the
+// Particle trigger filter so the hardware path stays untouched
+function updateRecentQuakes(json) {
+    if (!json || !json.features) return;
+
+    recentQuakes = json.features
+        .map(feature => {
+            let p = feature.properties || {};
+            let coords = (feature.geometry && feature.geometry.coordinates) || [];
+            return {
+                id: feature.id,
+                place: p.place,
+                mag: p.mag,
+                time: p.time,
+                url: p.url,
+                type: p.type,
+                lon: coords[0],
+                lat: coords[1],
+                depth: coords[2]
+            };
+        })
+        .sort((a, b) => b.time - a.time)
+        .slice(0, 50);
+}
+
 function processQuakeData(data) {
     let quakeData = [];
-    for (i = 0; i < data.features.length; i++){
+    for (let i = 0; i < data.features.length; i++){
         if (shouldTriggerSense(data.features[i].properties)) quakeData.push(data.features[i].properties);
     }
 
     quakeData.sort((a, b) => a.time - b.time)
-    console.log("USGS Output: ", quakeData)
+    console.log("USGS Output: ", quakeData, new Date().toLocaleTimeString())
     return quakeData
 }
 
@@ -68,6 +90,7 @@ function fetchNewQuakeData() {
 
 function checkForQuakes() {
     fetchNewQuakeData()
+        .then( quakeDataSet => { updateRecentQuakes(quakeDataSet); return quakeDataSet; })
         .then( quakeDataSet => processQuakeData(quakeDataSet))
         .then(quakeData => {
             Promise.all(
@@ -80,12 +103,12 @@ function checkForQuakes() {
             }))
     }).catch(e => console.log('fetchNewQuakeData Error ', e));
 
-    quakeTimer = setTimeout(() => { checkForQuakes() }, 20000);
+    setTimeout(() => { checkForQuakes() }, 20000);
 }
 
 function triggerSense(quakeData) {
-    let magnitude = scaleLogMagnitude(quakeData.mag), duration = magnitude;
-    concatValues = magnitude + 'n' + duration;
+    const magnitude = scaleLogMagnitude(quakeData.mag), duration = magnitude;
+    const concatValues = magnitude + 'n' + duration;
 
     logShouldInflate(quakeData, magnitude); // logs
 
@@ -93,22 +116,20 @@ function triggerSense(quakeData) {
 }
 
 async function sendToParticle(quakeData) {
-    let form = new formData(), header = new Headers();
     let concatValues = triggerSense(quakeData);
 
-    form.append('args', concatValues);
-    header.append("Content-Type", "application/x-www-form-urlencoded");
-
     var requestOptions = {
-        method: 'POST',
-        headers: header,
-        body: form,
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({arg:concatValues}),
         redirect: 'follow'
     };
 
     log('send to particle');
-
-    return await fetch('https://api.particle.io/v1/devices/' + process.env.DEVICE_KEY + '/data?access_token=' + process.env.PARTICLE_TOKEN, requestOptions)
+    const URL = 'https://api.particle.io/v1/devices/' + process.env.DEVICE_KEY + '/data?access_token=' + process.env.PARTICLE_TOKEN;
+    return await fetch(URL, requestOptions)
         .then(res => res.text())
         .then(result => {
             log(`Response received from seismic sense: ${result}`);
