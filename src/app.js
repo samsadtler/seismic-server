@@ -1,5 +1,6 @@
 
 var path = require('path');
+var crypto = require('crypto');
 var bodyParser = require('body-parser');
 var express = require('express');
 
@@ -15,12 +16,20 @@ var port = process.env.PORT || 4000,
 
 let currentQuakeState = {'body':'1000n200'};
 
-// rolling buffer of recent quakes for the landing page
-let recentQuakes = [];
+const USGS_URL = 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson';
+const CACHE_TTL = parseInt(process.env.CACHE_TTL) || 20000;
+const MIN_MAGNITUDE = parseFloat(process.env.MIN_MAGNITUDE) || .01;
+const MAX_DEVICE_QUAKES = 10; // ~432B worst case, stays within one 512B hook-response chunk
+const BOOTSTRAP_WINDOW_MS = parseInt(process.env.BOOTSTRAP_WINDOW_MS) || 5 * 60 * 1000; // cold-start replay window
+const ENABLE_PUSH = process.env.ENABLE_PUSH === 'true';
+
+// on-demand USGS feed cache — replaces the always-on poll loop so the
+// service is request-driven and safe to app-sleep on Railway
+let feedCache = { json: null, fetchedAt: 0 };
 
 app.listen(port, function () {
     log('Server running on port ' + port);
-    checkForQuakes();
+    if (ENABLE_PUSH) checkForQuakes(); // legacy push loop, migration only
 });
 
 app.get('/', function (req, res) {
@@ -31,24 +40,63 @@ app.post('/v1/latest', function (req, res) {
     return res.json(currentQuakeState)
 });
 
-app.get('/v1/quakes', function (req, res) {
-    return res.json(recentQuakes);
+app.get('/v1/quakes', async function (req, res) {
+    const json = await getQuakeFeed();
+    return res.json(buildRecentQuakes(json));
 });
 
-function shouldTriggerSense(quakeData) {
-    var isNewQuake = quakeData.time > lastRecordedQuakeTimes,
-        isHighMagnitude = quakeData.mag > .01,
-        shouldTrigger = isNewQuake && isHighMagnitude;
-   
-    return shouldTrigger;
+// device pull endpoint — called by the Particle integration webhook.
+// Devices keep their own cursor (last seen quake time) and send it as ?since=
+app.get('/v1/device/quakes', async function (req, res) {
+    if (!process.env.WEBHOOK_SECRET) return res.status(503).json({ error: 'not configured' });
+    if (!isAuthorizedWebhook(req)) return res.status(401).json({ error: 'unauthorized' });
+
+    const now = Date.now();
+    const since = parseSince(req.query.since);
+
+    // cold start (no/invalid cursor): replay just the last BOOTSTRAP_WINDOW_MS
+    // instead of the whole feed, so a freshly-booted device plays recent quakes
+    // rather than an hour of backlog (or nothing)
+    const effectiveSince = since === null ? now - BOOTSTRAP_WINDOW_MS : since;
+
+    const json = await getQuakeFeed();
+    return res.json({ now: now, quakes: buildDeviceQuakes(json, effectiveSince) });
+});
+
+function isAuthorizedWebhook(req) {
+    const provided = Buffer.from(req.get('x-webhook-secret') || '');
+    const expected = Buffer.from(process.env.WEBHOOK_SECRET);
+
+    return provided.length === expected.length && crypto.timingSafeEqual(provided, expected);
 }
 
-// builds the display buffer from the full feed, independent of the
-// Particle trigger filter so the hardware path stays untouched
-function updateRecentQuakes(json) {
-    if (!json || !json.features) return;
+function parseSince(raw) {
+    const since = Number.parseInt(raw, 10);
+    return Number.isSafeInteger(since) && since > 0 ? since : null;
+}
 
-    recentQuakes = json.features
+async function getQuakeFeed() {
+    const now = Date.now();
+    if (feedCache.json && now - feedCache.fetchedAt < CACHE_TTL) return feedCache.json;
+
+    try {
+        const response = await fetch(USGS_URL);
+        const json = await response.json();
+        if (json && json.features) {
+            feedCache = { json: json, fetchedAt: now };
+            log('Fetched USGS feed: ' + json.features.length + ' quakes at ' + new Date(now).toLocaleTimeString());
+        }
+    } catch (e) {
+        logError(e); // stale-if-error: fall through and serve the last good feed
+    }
+    return feedCache.json;
+}
+
+// display shape for the landing page
+function buildRecentQuakes(json) {
+    if (!json || !json.features) return [];
+
+    return json.features
         .map(feature => {
             let p = feature.properties || {};
             let coords = (feature.geometry && feature.geometry.coordinates) || [];
@@ -68,7 +116,29 @@ function updateRecentQuakes(json) {
         .slice(0, 50);
 }
 
+// minimal payload for devices: t = quake time (next cursor), v = "<magnitude>n<duration>"
+function buildDeviceQuakes(json, since) {
+    if (!json || !json.features) return [];
+
+    return json.features
+        .map(feature => feature.properties || {})
+        .filter(p => p.time > since && p.mag > MIN_MAGNITUDE)
+        .sort((a, b) => a.time - b.time)
+        .slice(-MAX_DEVICE_QUAKES) // newest N, oldest-first so devices play in order
+        .map(p => ({ t: p.time, v: triggerSense(p) }));
+}
+
+function shouldTriggerSense(quakeData) {
+    var isNewQuake = quakeData.time > lastRecordedQuakeTimes,
+        isHighMagnitude = quakeData.mag > MIN_MAGNITUDE,
+        shouldTrigger = isNewQuake && isHighMagnitude;
+
+    return shouldTrigger;
+}
+
 function processQuakeData(data) {
+    if (!data || !data.features) return [];
+
     let quakeData = [];
     for (let i = 0; i < data.features.length; i++){
         if (shouldTriggerSense(data.features[i].properties)) quakeData.push(data.features[i].properties);
@@ -79,29 +149,18 @@ function processQuakeData(data) {
     return quakeData
 }
 
-function fetchNewQuakeData() {
-    var url = 'http://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson';
-    
-    return fetchJson(url, json => {
-        if (json.features) return json;
-    }).catch(e => { console.error(`${e}`) });
-}
-
-
+// legacy push loop — only runs when ENABLE_PUSH=true, kept for migration
+// until device firmware moves to the pull model
 function checkForQuakes() {
-    fetchNewQuakeData()
-        .then( quakeDataSet => { updateRecentQuakes(quakeDataSet); return quakeDataSet; })
-        .then( quakeDataSet => processQuakeData(quakeDataSet))
-        .then(quakeData => {
-            Promise.all(
-                quakeData.map(
-                    async (quake) => {
-                        await sendToParticle(quake)
-                        .then(
-                            lastRecordedQuakeTimes = quake.time
-                        )
-            }))
-    }).catch(e => console.log('fetchNewQuakeData Error ', e));
+    getQuakeFeed()
+        .then(json => processQuakeData(json))
+        .then(quakeData => Promise.all(
+            quakeData.map(async (quake) => {
+                await sendToParticle(quake);
+                lastRecordedQuakeTimes = quake.time;
+            })
+        ))
+        .catch(e => console.log('checkForQuakes Error ', e));
 
     setTimeout(() => { checkForQuakes() }, 20000);
 }
@@ -136,18 +195,7 @@ async function sendToParticle(quakeData) {
             return result
         })
         .catch(error => logError('error' + error))
-        .catch(error => logError('error' + error));
 }
-
-//linear scale function
-// function scaleMagnitude(magnitude) {
-//     var richterMax = 10;
-//     var richterMin = 0;
-//     var newMax = 4000;
-//     var newMin = 200;
-//     var scaledMagnitude = ((newMax - newMin) / (richterMax - richterMin)) * (magnitude - richterMax) + newMax;
-//     return Math.abs(Math.round(scaledMagnitude));
-// }
 
 // log 10 based scale function
 function scaleLogMagnitude(magnitude) {
@@ -157,18 +205,6 @@ function scaleLogMagnitude(magnitude) {
     let scaledMagnitude = Math.abs(Math.round(newMax * Math.log10(adjMagnitude))) + newMin;
 
     return scaledMagnitude;
-}
-
- let fetchJson = async (url, handler) => {
-    return await fetch(url)
-        .then( response => {
-            return response.json();
-        }, error => {
-            logError(error);
-        })
-        .then(handler,  error => {
-            logError(error);
-        })
 }
 
 let log = message => {
