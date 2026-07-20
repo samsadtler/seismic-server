@@ -20,7 +20,7 @@ an event; a Particle integration webhook calls this server:
     X-Webhook-Secret: <value of WEBHOOK_SECRET>
 
 Response: `{ "now": <server_ms>, "quakes": [ { "t": <quake_ms>, "v": "<magnitude>n<duration>" } ] }`
-(oldest first, max 5). The device plays each `v`, then advances its cursor to the last `t`.
+(oldest first, max 10). The device plays each `v`, then advances its cursor to the last `t`.
 If `since` is missing/invalid (a freshly-booted device with no cursor) the server replays only
 the last `BOOTSTRAP_WINDOW_MS` (default 5 min) of quakes rather than the whole feed — so a new
 device plays recent activity, not an hour of backlog. The device then advances its cursor to
