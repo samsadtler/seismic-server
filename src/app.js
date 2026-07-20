@@ -17,11 +17,19 @@ var port = process.env.PORT || 4000,
 let currentQuakeState = {'body':'1000n200'};
 
 const USGS_URL = 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson';
-const CACHE_TTL = parseInt(process.env.CACHE_TTL) || 20000;
+
+// env int with a NaN-safe fallback (unlike `|| default`, this honors an explicit 0)
+// and a min clamp so negatives can't produce nonsense (e.g. a future bootstrap window)
+function envInt(name, def, min = 0) {
+    const raw = parseInt(process.env[name], 10);
+    return Number.isInteger(raw) ? Math.max(min, raw) : def;
+}
+
+const CACHE_TTL = envInt('CACHE_TTL', 20000);
 const _rawMinMag = parseFloat(process.env.MIN_MAGNITUDE);
 const MIN_MAGNITUDE = Number.isFinite(_rawMinMag) ? _rawMinMag : .01; // allows 0 / negatives
-const MAX_DEVICE_QUAKES = 10; // ~432B worst case, stays within one 512B hook-response chunk
-const BOOTSTRAP_WINDOW_MS = parseInt(process.env.BOOTSTRAP_WINDOW_MS) || 5 * 60 * 1000; // cold-start replay window
+const MAX_DEVICE_QUAKES = 10; // ~432B worst case at default MAX_DURATION; stays within one 512B hook-response chunk
+const BOOTSTRAP_WINDOW_MS = envInt('BOOTSTRAP_WINDOW_MS', 5 * 60 * 1000); // cold-start replay window (min 0)
 const ENABLE_PUSH = process.env.ENABLE_PUSH === 'true';
 
 // on-demand USGS feed cache — replaces the always-on poll loop so the
