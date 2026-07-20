@@ -18,7 +18,7 @@ let currentQuakeState = {'body':'1000n200'};
 
 const USGS_URL = 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson';
 const CACHE_TTL = parseInt(process.env.CACHE_TTL) || 20000;
-const MIN_MAGNITUDE = .01;
+const MIN_MAGNITUDE = parseFloat(process.env.MIN_MAGNITUDE) || .01;
 const MAX_DEVICE_QUAKES = 10; // ~432B worst case, stays within one 512B hook-response chunk
 const BOOTSTRAP_WINDOW_MS = parseInt(process.env.BOOTSTRAP_WINDOW_MS) || 5 * 60 * 1000; // cold-start replay window
 const ENABLE_PUSH = process.env.ENABLE_PUSH === 'true';

@@ -8,7 +8,7 @@
 7. (Optional) Add `PORT='4000'` — the server reads `process.env.PORT` and defaults to `4000`. On Railway/other hosts, `PORT` is injected automatically, so leave it unset there.
 8. Open terminal and install dependancies and run `npm install && npm start`
 
-Env vars used: `WEBHOOK_SECRET`, `MAX_DURATION`, `MIN_DURATION`, `PORT` (optional), `CACHE_TTL` (optional, ms), `BOOTSTRAP_WINDOW_MS` (optional, ms, default 5 min), `ENABLE_PUSH` (optional, legacy).
+Env vars used: `WEBHOOK_SECRET`, `MAX_DURATION`, `MIN_DURATION`, `MIN_MAGNITUDE` (optional, default 0.01), `PORT` (optional), `CACHE_TTL` (optional, ms), `BOOTSTRAP_WINDOW_MS` (optional, ms, default 5 min), `ENABLE_PUSH` (optional, legacy).
 
 ## Device pull model
 
