@@ -20,6 +20,7 @@ const USGS_URL = 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_
 const CACHE_TTL = parseInt(process.env.CACHE_TTL) || 20000;
 const MIN_MAGNITUDE = .01;
 const MAX_DEVICE_QUAKES = 5; // keeps hook-response payload within one 512B chunk
+const BOOTSTRAP_WINDOW_MS = parseInt(process.env.BOOTSTRAP_WINDOW_MS) || 5 * 60 * 1000; // cold-start replay window
 const ENABLE_PUSH = process.env.ENABLE_PUSH === 'true';
 
 // on-demand USGS feed cache — replaces the always-on poll loop so the
@@ -53,11 +54,13 @@ app.get('/v1/device/quakes', async function (req, res) {
     const now = Date.now();
     const since = parseSince(req.query.since);
 
-    // no valid cursor: return no backlog, device initializes its cursor to `now`
-    if (since === null) return res.json({ now: now, quakes: [] });
+    // cold start (no/invalid cursor): replay just the last BOOTSTRAP_WINDOW_MS
+    // instead of the whole feed, so a freshly-booted device plays recent quakes
+    // rather than an hour of backlog (or nothing)
+    const effectiveSince = since === null ? now - BOOTSTRAP_WINDOW_MS : since;
 
     const json = await getQuakeFeed();
-    return res.json({ now: now, quakes: buildDeviceQuakes(json, since) });
+    return res.json({ now: now, quakes: buildDeviceQuakes(json, effectiveSince) });
 });
 
 function isAuthorizedWebhook(req) {
