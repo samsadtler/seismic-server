@@ -18,7 +18,8 @@ let currentQuakeState = {'body':'1000n200'};
 
 const USGS_URL = 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson';
 const CACHE_TTL = parseInt(process.env.CACHE_TTL) || 20000;
-const MIN_MAGNITUDE = parseFloat(process.env.MIN_MAGNITUDE) || .01;
+const _rawMinMag = parseFloat(process.env.MIN_MAGNITUDE);
+const MIN_MAGNITUDE = Number.isFinite(_rawMinMag) ? _rawMinMag : .01; // allows 0 / negatives
 const MAX_DEVICE_QUAKES = 10; // ~432B worst case, stays within one 512B hook-response chunk
 const BOOTSTRAP_WINDOW_MS = parseInt(process.env.BOOTSTRAP_WINDOW_MS) || 5 * 60 * 1000; // cold-start replay window
 const ENABLE_PUSH = process.env.ENABLE_PUSH === 'true';
@@ -124,8 +125,11 @@ function buildDeviceQuakes(json, since) {
         .map(feature => feature.properties || {})
         .filter(p => p.time > since && p.mag > MIN_MAGNITUDE)
         .sort((a, b) => a.time - b.time)
-        .slice(-MAX_DEVICE_QUAKES) // newest N, oldest-first so devices play in order
-        .map(p => ({ t: p.time, v: triggerSense(p) }));
+        // newest N, oldest-first so devices play in order. If more than N match the
+        // window, the oldest are intentionally dropped (newest-wins) to keep the
+        // hook-response within one 512B chunk; the cursor advances past them.
+        .slice(-MAX_DEVICE_QUAKES)
+        .map(p => ({ t: p.time, v: computeV(p) }));
 }
 
 function shouldTriggerSense(quakeData) {
@@ -165,13 +169,16 @@ function checkForQuakes() {
     setTimeout(() => { checkForQuakes() }, 20000);
 }
 
-function triggerSense(quakeData) {
+// pure "<magnitude>n<duration>" string, no logging — used by the pull path
+function computeV(quakeData) {
     const magnitude = scaleLogMagnitude(quakeData.mag), duration = magnitude;
-    const concatValues = magnitude + 'n' + duration;
+    return magnitude + 'n' + duration;
+}
 
-    logShouldInflate(quakeData, magnitude); // logs
-
-    return concatValues;
+// push path: same value, but logs the vibration (an actual trigger is happening)
+function triggerSense(quakeData) {
+    logShouldInflate(quakeData, scaleLogMagnitude(quakeData.mag)); // logs
+    return computeV(quakeData);
 }
 
 async function sendToParticle(quakeData) {
