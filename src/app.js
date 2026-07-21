@@ -30,6 +30,7 @@ const _rawMinMag = parseFloat(process.env.MIN_MAGNITUDE);
 const MIN_MAGNITUDE = Number.isFinite(_rawMinMag) ? _rawMinMag : .01; // allows 0 / negatives
 const MAX_DEVICE_QUAKES = 7; // ~491B worst case (7 × 20-char id, default MAX_DURATION); one 512B hook-response chunk
 const MAX_ID_LEN = 20; // cap emitted event id so long "official" USGS ids can't push the payload past 512B
+const GRACE_MS = envInt('GRACE_MS', 30 * 60 * 1000); // look back this far behind the cursor to catch quakes USGS added/revised out of order (dedup makes it replay-safe)
 const ENABLE_PUSH = process.env.ENABLE_PUSH === 'true';
 
 // on-demand USGS feed cache — replaces the always-on poll loop so the
@@ -138,9 +139,12 @@ function buildDeviceQuakes(json, since) {
 
     // newest N since the cursor; if more than N match, the oldest are dropped (newest-wins)
     // to keep the hook-response within one 512B chunk — the cursor advances past them.
+    // look back GRACE_MS behind the cursor so a quake USGS added/revised out of order
+    // (updated time below the device's watermark) is still returned; the device dedupes
+    // on id, so re-sending already-played quakes in the window doesn't replay them
     const selected = since === null
         ? entries.slice(-1)
-        : entries.filter(x => x.cursor > since).slice(-MAX_DEVICE_QUAKES);
+        : entries.filter(x => x.cursor > since - GRACE_MS).slice(-MAX_DEVICE_QUAKES);
 
     return selected.map(x => ({ t: x.cursor, i: (x.id || '').slice(0, MAX_ID_LEN), v: computeV(x.p) }));
 }
