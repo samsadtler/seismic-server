@@ -28,7 +28,8 @@ function envInt(name, def, min = 0) {
 const CACHE_TTL = envInt('CACHE_TTL', 20000);
 const _rawMinMag = parseFloat(process.env.MIN_MAGNITUDE);
 const MIN_MAGNITUDE = Number.isFinite(_rawMinMag) ? _rawMinMag : .01; // allows 0 / negatives
-const MAX_DEVICE_QUAKES = 7; // ~473B worst case (incl. event id, default MAX_DURATION); one 512B hook-response chunk
+const MAX_DEVICE_QUAKES = 7; // ~491B worst case (7 × 20-char id, default MAX_DURATION); one 512B hook-response chunk
+const MAX_ID_LEN = 20; // cap emitted event id so long "official" USGS ids can't push the payload past 512B
 const ENABLE_PUSH = process.env.ENABLE_PUSH === 'true';
 
 // on-demand USGS feed cache — replaces the always-on poll loop so the
@@ -131,7 +132,8 @@ function buildDeviceQuakes(json, since) {
     const entries = json.features
         .map(f => ({ id: f.id, p: f.properties || {} }))
         .filter(x => x.p.mag > MIN_MAGNITUDE)
-        .map(x => ({ id: x.id, p: x.p, cursor: x.p.updated || x.p.time }))
+        // cursor on `updated` (nullish-guard, not `||`, so a real updated:0 wouldn't fall back)
+        .map(x => ({ id: x.id, p: x.p, cursor: x.p.updated != null ? x.p.updated : x.p.time }))
         .sort((a, b) => a.cursor - b.cursor); // oldest-first
 
     // newest N since the cursor; if more than N match, the oldest are dropped (newest-wins)
@@ -140,7 +142,7 @@ function buildDeviceQuakes(json, since) {
         ? entries.slice(-1)
         : entries.filter(x => x.cursor > since).slice(-MAX_DEVICE_QUAKES);
 
-    return selected.map(x => ({ t: x.cursor, i: x.id, v: computeV(x.p) }));
+    return selected.map(x => ({ t: x.cursor, i: (x.id || '').slice(0, MAX_ID_LEN), v: computeV(x.p) }));
 }
 
 function shouldTriggerSense(quakeData) {
