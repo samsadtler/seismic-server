@@ -8,7 +8,7 @@
 7. (Optional) Add `PORT='4000'` — the server reads `process.env.PORT` and defaults to `4000`. On Railway/other hosts, `PORT` is injected automatically, so leave it unset there.
 8. Open terminal and install dependancies and run `npm install && npm start`
 
-Env vars used: `WEBHOOK_SECRET`, `MAX_DURATION`, `MIN_DURATION`, `MIN_MAGNITUDE` (optional, default 0.01), `PORT` (optional), `CACHE_TTL` (optional, ms), `ENABLE_PUSH` (optional, legacy).
+Env vars used: `WEBHOOK_SECRET`, `MAX_DURATION`, `MIN_DURATION`, `MIN_MAGNITUDE` (optional, default 0.01), `PORT` (optional), `CACHE_TTL` (optional, ms), `GRACE_MS` (optional, ms, default 30 min), `ENABLE_PUSH` (optional, legacy).
 
 ## Device pull model
 
@@ -29,6 +29,12 @@ because its origin time is older than the cursor. Filtering on `updated` catches
 arrivals. Because a revision also bumps `updated` (which would otherwise re-send an
 already-played quake), each entry includes the event id `i`; the **device dedupes on `i`** and
 skips quakes it has already played, while still advancing its cursor past them.
+
+The server also looks back `GRACE_MS` (default 30 min) behind the cursor — it returns quakes with
+`updated > since - GRACE_MS`. This catches quakes that arrive with an `updated` time *below* the
+device's watermark (USGS publish lag / out-of-order revisions) that a strict `updated > since`
+would miss. The id dedupe makes the re-scanned window replay-safe. Cold start (missing/invalid
+`since`) still returns just the single newest quake.
 
 Cold start (a freshly-booted device sends a missing/invalid `since`): the server returns just
 the **single newest** quake, so a new device plays the latest event and starts tracking from
