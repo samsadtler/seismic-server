@@ -28,8 +28,7 @@ function envInt(name, def, min = 0) {
 const CACHE_TTL = envInt('CACHE_TTL', 20000);
 const _rawMinMag = parseFloat(process.env.MIN_MAGNITUDE);
 const MIN_MAGNITUDE = Number.isFinite(_rawMinMag) ? _rawMinMag : .01; // allows 0 / negatives
-const MAX_DEVICE_QUAKES = 10; // ~432B worst case at default MAX_DURATION; stays within one 512B hook-response chunk
-const BOOTSTRAP_WINDOW_MS = envInt('BOOTSTRAP_WINDOW_MS', 5 * 60 * 1000); // cold-start replay window (min 0)
+const MAX_DEVICE_QUAKES = 7; // ~473B worst case (incl. event id, default MAX_DURATION); one 512B hook-response chunk
 const ENABLE_PUSH = process.env.ENABLE_PUSH === 'true';
 
 // on-demand USGS feed cache — replaces the always-on poll loop so the
@@ -55,21 +54,16 @@ app.get('/v1/quakes', async function (req, res) {
 });
 
 // device pull endpoint — called by the Particle integration webhook.
-// Devices keep their own cursor (last seen quake time) and send it as ?since=
+// Devices keep their own cursor (the last `updated` value they've seen) and send it as ?since=
 app.get('/v1/device/quakes', async function (req, res) {
     if (!process.env.WEBHOOK_SECRET) return res.status(503).json({ error: 'not configured' });
     if (!isAuthorizedWebhook(req)) return res.status(401).json({ error: 'unauthorized' });
 
     const now = Date.now();
-    const since = parseSince(req.query.since);
-
-    // cold start (no/invalid cursor): replay just the last BOOTSTRAP_WINDOW_MS
-    // instead of the whole feed, so a freshly-booted device plays recent quakes
-    // rather than an hour of backlog (or nothing)
-    const effectiveSince = since === null ? now - BOOTSTRAP_WINDOW_MS : since;
+    const since = parseSince(req.query.since); // null on cold start (no/invalid cursor)
 
     const json = await getQuakeFeed();
-    return res.json({ now: now, quakes: buildDeviceQuakes(json, effectiveSince) });
+    return res.json({ now: now, quakes: buildDeviceQuakes(json, since) });
 });
 
 function isAuthorizedWebhook(req) {
@@ -125,19 +119,28 @@ function buildRecentQuakes(json) {
         .slice(0, 50);
 }
 
-// minimal payload for devices: t = quake time (next cursor), v = "<magnitude>n<duration>"
+// minimal payload for devices: t = cursor (the USGS `updated` time), i = event id, v = "<mag>n<dur>".
+// The cursor is `updated` (when USGS published/revised the record) rather than the origin `time`,
+// so quakes added to the feed late — origin time older than the cursor — still come through.
+// The device dedupes by `i`, so a quake whose record is merely revised (a bumped `updated`) is
+// not replayed. Cold start (since === null): return just the newest quake, so a fresh device
+// plays the latest event and starts tracking from there.
 function buildDeviceQuakes(json, since) {
     if (!json || !json.features) return [];
 
-    return json.features
-        .map(feature => feature.properties || {})
-        .filter(p => p.time > since && p.mag > MIN_MAGNITUDE)
-        .sort((a, b) => a.time - b.time)
-        // newest N, oldest-first so devices play in order. If more than N match the
-        // window, the oldest are intentionally dropped (newest-wins) to keep the
-        // hook-response within one 512B chunk; the cursor advances past them.
-        .slice(-MAX_DEVICE_QUAKES)
-        .map(p => ({ t: p.time, v: computeV(p) }));
+    const entries = json.features
+        .map(f => ({ id: f.id, p: f.properties || {} }))
+        .filter(x => x.p.mag > MIN_MAGNITUDE)
+        .map(x => ({ id: x.id, p: x.p, cursor: x.p.updated || x.p.time }))
+        .sort((a, b) => a.cursor - b.cursor); // oldest-first
+
+    // newest N since the cursor; if more than N match, the oldest are dropped (newest-wins)
+    // to keep the hook-response within one 512B chunk — the cursor advances past them.
+    const selected = since === null
+        ? entries.slice(-1)
+        : entries.filter(x => x.cursor > since).slice(-MAX_DEVICE_QUAKES);
+
+    return selected.map(x => ({ t: x.cursor, i: x.id, v: computeV(x.p) }));
 }
 
 function shouldTriggerSense(quakeData) {
