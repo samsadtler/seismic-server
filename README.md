@@ -8,25 +8,32 @@
 7. (Optional) Add `PORT='4000'` — the server reads `process.env.PORT` and defaults to `4000`. On Railway/other hosts, `PORT` is injected automatically, so leave it unset there.
 8. Open terminal and install dependancies and run `npm install && npm start`
 
-Env vars used: `WEBHOOK_SECRET`, `MAX_DURATION`, `MIN_DURATION`, `MIN_MAGNITUDE` (optional, default 0.01), `PORT` (optional), `CACHE_TTL` (optional, ms), `BOOTSTRAP_WINDOW_MS` (optional, ms, default 5 min), `ENABLE_PUSH` (optional, legacy).
+Env vars used: `WEBHOOK_SECRET`, `MAX_DURATION`, `MIN_DURATION`, `MIN_MAGNITUDE` (optional, default 0.01), `PORT` (optional), `CACHE_TTL` (optional, ms), `ENABLE_PUSH` (optional, legacy).
 
 ## Device pull model
 
 Devices no longer receive pushes by default. Instead, each Particle device keeps its own
-cursor (the `time` of the last quake it played, stored in EEPROM) and periodically publishes
+cursor (the last USGS `updated` value it has seen, stored in EEPROM) and periodically publishes
 an event; a Particle integration webhook calls this server:
 
     GET /v1/device/quakes?since=<cursor_ms>
     X-Webhook-Secret: <value of WEBHOOK_SECRET>
 
-Response: `{ "now": <server_ms>, "quakes": [ { "t": <quake_ms>, "v": "<magnitude>n<duration>" } ] }`
-(oldest first, max 10). The device plays each `v`, then advances its cursor to the last `t`.
-If `since` is missing/invalid (a freshly-booted device with no cursor) the server replays only
-the last `BOOTSTRAP_WINDOW_MS` (default 5 min) of quakes rather than the whole feed — so a new
-device plays recent activity, not an hour of backlog. The device then advances its cursor to
-the last `t` it played (or `now` if that window was empty). Requests without the correct
-`X-Webhook-Secret` header get `401`; if `WEBHOOK_SECRET` is unset on the server the endpoint
-fails closed with `503`.
+Response: `{ "now": <server_ms>, "quakes": [ { "t": <updated_ms>, "i": "<event_id>", "v": "<magnitude>n<duration>" } ] }`
+(oldest first, max 7). The device plays each `v`, then advances its cursor to the last `t`.
+
+The cursor is the record's **`updated`** time (when USGS published/revised it), **not** the
+quake's origin `time`. USGS adds and revises events late and out of order, so a quake that
+happened 30 min ago may only appear in the feed now — filtering on origin `time` would skip it
+because its origin time is older than the cursor. Filtering on `updated` catches these late
+arrivals. Because a revision also bumps `updated` (which would otherwise re-send an
+already-played quake), each entry includes the event id `i`; the **device dedupes on `i`** and
+skips quakes it has already played, while still advancing its cursor past them.
+
+Cold start (a freshly-booted device sends a missing/invalid `since`): the server returns just
+the **single newest** quake, so a new device plays the latest event and starts tracking from
+there. Requests without the correct `X-Webhook-Secret` header get `401`; if `WEBHOOK_SECRET` is
+unset on the server the endpoint fails closed with `503`.
 
 Legacy push mode (server calls the Particle API; needs `DEVICE_KEY` + `PARTICLE_TOKEN`)
 still exists behind `ENABLE_PUSH='true'` for migration, and will be removed once all
